@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zoom Error 1132 Fix</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        h1, h2 {
+            border-bottom: 2px solid #444;
+            padding-bottom: 8px;
+            color: #58a6ff;
+        }
+        h2 {
+            margin-top: 30px;
+        }
+        code {
+            font-family: "Courier New", Courier, monospace;
+            background-color: #2a2a2a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.95em;
+        }
+        pre {
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 15px;
+            overflow-x: auto;
+            position: relative;
+        }
+        pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+        .code-container {
+            position: relative;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        .copy-btn:hover {
+            opacity: 1;
+        }
+        .copy-btn:active {
+            background-color: #005a99;
+        }
+        li {
+            margin-bottom: 10px;
+        }
+        .win10, .win11 {
+            font-style: italic;
+            font-size: 0.9em;
+        }
+        .note {
+            background-color: #2a2a2a;
+            border-left: 4px solid #f0ad4e;
+            padding: 10px 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Automated Windows Fix for Zoom Error 1132</h1>
+    <p>If you are comfortable with PowerShell, you can use the automated script below to fix the error. If you are not comfortable with PowerShell, you can follow the manual steps below.</p>
+    <p>You must run the <code>CreateZoomUser.ps1</code> script as an Administrator. This script will:</p>
+        <ol>
+        <li>Ask you to create a password for the new 'ZoomLocal' user.</li>
+        <li>Create the 'ZoomLocal' user account.</li>
+        <li>Enable and start the 'Secondary Logon' service.</li>
+        <li>Create the RunZoom.cmd launcher on your public desktop.</li>
+    </ol>
+    <p>You will still need to manually:</p>
+    <ol>
+        <li>Sign out of and update Zoom.</li>
+        <li>Log out, log in as ZoomLocal to initialize the profile, log out, and log back into your main account.</li>
+        <li>Run the new shortcut and join your meeting.</li>
+    </ol>
+    <p><a href="./CreateZoomUser.ps1" download>Download the automated script</a> and run it in PowerShell.</p>
+    <div class="code-container">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>
+            #Requires -RunAsAdministrator
+
+            Write-Host "--- Zoom 1132 Error Fix Script ---" -ForegroundColor Yellow
+            Write-Host "This script will create a new local user 'ZoomLocal' and a desktop shortcut to run Zoom as that user."
+            Write-Host "You must run this as an Administrator."
+            Write-Host
+            
+            # Step 2: Create the user
+            try {
+                $Password = Read-Host -AsSecureString -Prompt "Please enter a new, secure password for the 'ZoomLocal' user"
+                
+                Write-Host "Creating local user 'ZoomLocal'..."
+                New-LocalUser "ZoomLocal" -Password $Password -FullName "ZoomLocal User" -Description "Zoom Error 1132 workaround" -ErrorAction Stop
+                Add-LocalGroupMember -Group "Users" -Member "ZoomLocal" -ErrorAction Stop
+                
+                Write-Host "'ZoomLocal' user created successfully." -ForegroundColor Green
+            }
+            catch {
+                Write-Host "Error creating user: $_" -ForegroundColor Red
+                Write-Host "The user might already exist. If so, that's okay."
+            }
+            
+            Write-Host
+            # Step 4: Enable Secondary Logon
+            try {
+                Write-Host "Configuring 'Secondary Logon' service (seclogon)..."
+                Set-Service -Name seclogon -StartupType Automatic -ErrorAction Stop
+                Start-Service -Name seclogon -ErrorAction Stop
+                
+                Write-Host "'Secondary Logon' service is set to Automatic and started." -ForegroundColor Green
+            }
+            catch {
+                Write-Host "Error configuring Secondary Logon service: $_" -ForegroundColor Red
+            }
+            
+            Write-Host
+            # Step 5: Create the .cmd launcher
+            $DesktopPath = [Environment]::GetFolderPath("CommonDesktopDirectory")
+            $LauncherPath = Join-Path -Path $DesktopPath -ChildPath "Run Zoom as Local User.cmd"
+            
+            $LauncherContent = @"
+            @echo off
+            set "ZOOM_PATH_USER=%LocalAppData%\Zoom\bin\Zoom.exe"
+            set "ZOOM_PATH_MACHINE=%ProgramFiles(x86)%\Zoom\bin\Zoom.exe"
+            
+            echo Attempting to start Zoom as ZoomLocal...
+            echo Please enter the password for the 'ZoomLocal' user when prompted.
+            
+            if exist "%ZOOM_PATH_USER%" (
+                echo Found Zoom in user profile (AppData).
+                runas /user:ZoomLocal "%ZOOM_PATH_USER%"
+            ) else if exist "%ZOOM_PATH_MACHINE%" (
+                echo Found Zoom in Program Files.
+                runas /user:ZoomLocal "%ZOOM_PATH_MACHINE%"
+            ) else (
+                echo ERROR: Could not find Zoom.exe in common locations.
+                pause
+            )
+            "@
+            
+            try {
+                Set-Content -Path $LauncherPath -Value $LauncherContent -Encoding "ASCII" -ErrorAction Stop
+                Write-Host "Created 'Run Zoom as Local User.cmd' shortcut on the Public Desktop." -ForegroundColor Green
+            }
+            catch {
+                Write-Host "Error creating desktop shortcut: $_" -ForegroundColor Red
+            }
+            
+            Write-Host
+            Write-Host "--- SCRIPT COMPLETE ---" -ForegroundColor Yellow
+            Write-Host "IMPORTANT: You must now log out of Windows, log in as 'ZoomLocal' once," -ForegroundColor Cyan
+            Write-Host "then log out and back into your main account." -ForegroundColor Cyan
+            Write-Host "After that, use the new desktop shortcut to run Zoom." -ForegroundColor Cyan
+            Write-Host
+            Read-Host -Prompt "Press Enter to exit"
+        </code></pre>
+    </div>
+    <h1>Fix for Zoom Error 1132</h1>
+    <p>Follow these steps to bypass the error by running Zoom under a fresh local user account. Steps with code blocks can be automated.</p>
+
+    <h2>STEP 1: Update & Sign Out of Zoom (Manual)</h2>
+    <ol>
+        <li>Open your regular Zoom app.</li>
+        <li>Click your <strong>profile icon</strong> (top-right) → <strong>Help</strong> → <strong>Check for Updates</strong>. Install any updates.</li>
+        <li>Click your <strong>profile icon</strong> → <strong>Sign Out</strong>.</li>
+    </ol>
+
+    <h2>STEP 2: Create a Fresh Local Windows User</h2>
+    <p>You only need to run <strong>one</strong> of the two code blocks below. PowerShell is recommended, but Command Prompt works fine.</p>
+    <p><strong>Right-click your Start menu</strong> and select <strong>Windows Terminal (Admin)</strong> or <strong>PowerShell (Admin)</strong>, then run your chosen command.</p>
+
+    <p><strong>Option A (PowerShell):</strong></p>
+    <div class="code-container">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code># This script will ask you to create a secure password
+$Password = Read-Host -AsSecureString -Prompt "Enter a new password for the 'ZoomLocal' user"
+New-LocalUser "ZoomLocal" -Password $Password -FullName "ZoomLocal User" -Description "Zoom Error 1132 workaround"
+Add-LocalGroupMember -Group "Users" -Member "ZoomLocal"
+Write-Host "'ZoomLocal' user created successfully."</code></pre>
+    </div>
+
+    <p><strong>Option B (Command Prompt):</strong></p>
+    <div class="note">
+        <p>You <strong>must</strong> replace <code>YourPassword123</code> with your own password. Make it secure!</p>
+    </div>
+    <div class="code-container">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>net user ZoomLocal YourPassword123 /add /fullname:"ZoomLocal User" /comment:"Zoom Error 1132 workaround"
+net localgroup Users ZoomLocal /add</code></pre>
+    </div>
+
+    <h2>STEP 3: Initialize the New User (Manual)</h2>
+    <p>This is the most important manual step. You cannot script this.</p>
+    <ol>
+        <li>Click the <strong>Start Menu</strong> → your <strong>user icon</strong> → <strong>Sign out</strong>.</li>
+        <li>On the Windows login screen, select the new <strong>ZoomLocal</strong> user.</li>
+        <li>Log in with the password you created in Step 2.</li>
+        <li>Wait for Windows to finish its "Hi, we're getting things ready..." setup.</li>
+        <li>Once you see the new desktop, click <strong>Start</strong> → <strong>ZoomLocal user icon</strong> → <strong>Sign out</strong>.</li>
+        <li>Log back into your <strong>regular, main account</strong>.</li>
+    </ol>
+
+    <h2>STEP 4: Turn on "Secondary Logon" Service</h2>
+    <p>This service is required to "Run as different user." Run one of these in an <strong>Admin</strong> terminal (like in Step 2).</p>
+    
+    <p><strong>Option A (PowerShell):</strong></p>
+    <div class="code-container">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>Set-Service -Name seclogon -StartupType Automatic
+Start-Service -Name seclogon
+Write-Host "Secondary Logon service has been set to Automatic and started."</code></pre>
+    </div>
+
+    <p><strong>Option B (Command Prompt):</strong></p>
+    <div class="code-container">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>sc config seclogon start= auto
+sc start seclogon</code></pre>
+    </div>
+
+    <h2>STEP 5: Create a "One-Click" Zoom Launcher</h2>
+    <p>This batch file will launch Zoom as the `ZoomLocal` user, prompting you for that user's password each time.</p>
+    <ol>
+        <li>Right-click on your Desktop → <strong>New</strong> → <strong>Text Document</strong>.</li>
+        <li>Name the file <code>RunZoom.cmd</code> (make sure to change the extension from <code>.txt</code> to <code>.cmd</code>).</li>
+        <li>Right-click <code>RunZoom.cmd</code> → <strong>Edit</strong>.</li>
+        <li>Paste the code below. It checks both common Zoom install locations.</li>
+        <li>Save and close the file.</li>
+    </ol>
+    <div class="code-container">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>@echo off
+set "ZOOM_PATH_USER=%LocalAppData%\Zoom\bin\Zoom.exe"
+set "ZOOM_PATH_MACHINE=%ProgramFiles(x86)%\Zoom\bin\Zoom.exe"
+
+echo Attempting to start Zoom as ZoomLocal...
+
+if exist "%ZOOM_PATH_USER%" (
+    echo Found Zoom in user profile.
+    runas /user:ZoomLocal "%ZOOM_PATH_USER%"
+) else if exist "%ZOOM_PATH_MACHINE%" (
+    echo Found Zoom in Program Files.
+    runas /user:ZoomLocal "%ZOOM_PATH_MACHINE%"
+) else (
+    echo ERROR: Could not find Zoom.exe
+    pause
+)
+</code></pre>
+    </div>
+    
+    <h2>STEP 6: Join Your Meeting</h2>
+    <ol>
+        <li>Double-click the <code>RunZoom.cmd</code> file on your Desktop.</li>
+        <li>A command prompt will appear. Enter the <strong>password for `ZoomLocal`</strong> (from Step 2) and press Enter.</li>
+        <li>Zoom will launch. <strong>Do not sign in.</strong></li>
+        <li>Just click <strong>Join a Meeting</strong> and enter your Meeting ID.</li>
+        <li>You should connect without Error 1132.</li>
+    </ol>
+
+    <hr style="border-color: #444; margin: 30px 0;">
+
+    <h1>Advanced Cleanup (If steps 1-6 fail)</h1>
+
+    <h2>STEP 7: Remove Old Zoom Registry Hooks (Optional)</h2>
+    <p>Run this in an <strong>Admin Command Prompt</strong> to remove leftover registry keys.</p>
+    <div class="code-container">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>reg delete "HKEY_CLASSES_ROOT\ZoomPhoneCall" /f
+reg delete "HKEY_CLASSES_ROOT\ZoomPhoneSMS" /f
+echo Registry keys removed (if they existed).</code></pre>
+    </div>
+
+    <h2>STEP 8: Clean Reinstall Zoom (Optional)</h2>
+    <ol>
+        <li>Press <strong>Win + R</strong>, type <code>appwiz.cpl</code>, and press Enter.</li>
+        <li>Find "Zoom" or "Zoom Workplace," right-click, and <strong>Uninstall</strong>.</li>
+        <li>Go to <a href="https://zoom.us/download" target="_blank" style="color: #58a6ff;">zoom.us/download</a> and install the latest client.</li>
+        <li><strong>Do not sign in.</strong> Try Step 6 again.</li>
+    </ol>
+
+    <script>
+        function copyCode(button) {
+            const pre = button.parentElement.querySelector('pre');
+            const code = pre.innerText;
+            navigator.clipboard.writeText(code).then(() => {
+                button.innerText = 'Copied!';
+                setTimeout(() => {
+                    button.innerText = 'Copy';
+                }, 2000);
+            }, (err) => {
+                button.innerText = 'Failed!';
+                console.error('Failed to copy: ', err);
+            });
+        }
+    </script>
+
+</body>
+</html>
